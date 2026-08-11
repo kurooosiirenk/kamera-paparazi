@@ -38,7 +38,7 @@ button{border:0;border-radius:10px;padding:14px 22px;font-size:17px;font-weight:
     <h1>Paparazzi Hand Camera</h1>
     <p>Versi web untuk Android, iPad, dan laptop.<br>Tekan mulai lalu izinkan akses kamera.</p>
     <button id="startBtn">MULAI KAMERA</button>
-    <p id="error"></p>
+    <p id="error"></p><p id="status">Memuat sistem...</p>
   </div>
 </div>
 
@@ -46,7 +46,7 @@ button{border:0;border-radius:10px;padding:14px 22px;font-size:17px;font-weight:
 import {
   HandLandmarker,
   FilesetResolver
-} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/+esm";
+} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/+esm";
 
 const video = document.getElementById("video");
 const screen = document.getElementById("screen");
@@ -56,6 +56,7 @@ const dctx = drawLayer.getContext("2d");
 const start = document.getElementById("start");
 const startBtn = document.getElementById("startBtn");
 const errorBox = document.getElementById("error");
+const startupStatus = document.getElementById("status");
 const modeText = document.getElementById("mode");
 const helpText = document.getElementById("help");
 const clearBtn = document.getElementById("clear");
@@ -421,10 +422,13 @@ async function setup(){
 
     startBtn.disabled=true;
     startBtn.textContent="MEMUAT...";
+    startupStatus.textContent="Memuat MediaPipe...";
 
     const vision = await FilesetResolver.forVisionTasks(
-      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm"
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm"
     );
+
+    startupStatus.textContent="Memuat model hand tracking...";
 
     landmarker = await HandLandmarker.createFromOptions(vision,{
       baseOptions:{
@@ -439,6 +443,8 @@ async function setup(){
       minTrackingConfidence:.75
     });
 
+    startupStatus.textContent="Meminta izin kamera...";
+
     const stream = await navigator.mediaDevices.getUserMedia({
       video:{
         facingMode:"user",
@@ -451,6 +457,7 @@ async function setup(){
     video.srcObject=stream;
     await video.play();
 
+    startupStatus.textContent="Kamera siap.";
     start.style.display="none";
     requestAnimationFrame(loop);
 
@@ -458,6 +465,7 @@ async function setup(){
     console.error(err);
     startBtn.disabled=false;
     startBtn.textContent="COBA LAGI";
+    startupStatus.textContent="Gagal memulai.";
     errorBox.textContent =
       "Kamera gagal dibuka.\n" +
       "Pastikan website dibuka lewat HTTPS dan izin kamera diberikan.\n\n" +
