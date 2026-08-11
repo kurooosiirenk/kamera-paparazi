@@ -1,0 +1,1664 @@
+```html
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+
+<meta name="viewport"
+      content="width=device-width,
+      initial-scale=1.0,
+      maximum-scale=1.0,
+      user-scalable=no">
+
+<title>Paparazzi Hand Tracking</title>
+
+<style>
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html,
+body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: black;
+    font-family: Arial, sans-serif;
+}
+
+#app {
+    position: fixed;
+    inset: 0;
+    background: black;
+}
+
+#video {
+    display: none;
+}
+
+#canvas {
+    position: absolute;
+    inset: 0;
+
+    width: 100%;
+    height: 100%;
+
+    object-fit: cover;
+}
+
+#drawCanvas {
+    position: absolute;
+    inset: 0;
+
+    width: 100%;
+    height: 100%;
+
+    pointer-events: none;
+}
+
+#ui {
+    position: absolute;
+
+    top: 18px;
+    left: 18px;
+
+    z-index: 5;
+
+    color: white;
+
+    text-shadow:
+        0 2px 5px black;
+}
+
+#mode {
+    font-size: 21px;
+    font-weight: bold;
+}
+
+#info {
+    margin-top: 8px;
+    font-size: 14px;
+}
+
+#message {
+    margin-top: 6px;
+    font-size: 12px;
+    opacity: .8;
+}
+
+#start {
+    position: absolute;
+    inset: 0;
+
+    z-index: 10;
+
+    display: flex;
+    flex-direction: column;
+
+    justify-content: center;
+    align-items: center;
+
+    background:
+        radial-gradient(
+            circle,
+            #222,
+            #000
+        );
+
+    color: white;
+
+    text-align: center;
+}
+
+#start h1 {
+    font-size:
+        clamp(
+            35px,
+            10vw,
+            75px
+        );
+
+    letter-spacing: 5px;
+}
+
+#start p {
+    margin-top: 8px;
+    opacity: .6;
+}
+
+#startButton {
+    margin-top: 30px;
+
+    padding:
+        15px 30px;
+
+    border: none;
+    border-radius: 12px;
+
+    background: white;
+    color: black;
+
+    font-size: 17px;
+    font-weight: bold;
+}
+
+#startButton:active {
+    transform: scale(.95);
+}
+
+#error {
+    max-width: 350px;
+
+    margin-top: 20px;
+    padding: 0 20px;
+
+    color: #ff5555;
+
+    font-size: 13px;
+}
+
+.hidden {
+    display: none !important;
+}
+
+</style>
+</head>
+
+
+<body>
+
+<div id="app">
+
+    <video
+        id="video"
+        autoplay
+        playsinline
+        muted>
+    </video>
+
+    <canvas id="canvas"></canvas>
+
+    <canvas id="drawCanvas"></canvas>
+
+
+    <div id="ui">
+
+        <div id="mode">
+            DRAWING MODE
+        </div>
+
+        <div id="info">
+            COLOR: RED
+        </div>
+
+        <div id="message">
+            TELUNJUK = DRAW ·
+            5 JARI = CAMERA ·
+            PINCH = CHANGE
+        </div>
+
+    </div>
+
+
+    <div id="start">
+
+        <h1>PAPARAZZI</h1>
+
+        <p>
+            HAND TRACKING CAMERA
+        </p>
+
+        <button id="startButton">
+            START CAMERA
+        </button>
+
+        <div id="error"></div>
+
+    </div>
+
+</div>
+
+
+<script type="module">
+
+/* =====================================================
+   MEDIAPIPE TASKS VISION
+===================================================== */
+
+import {
+    HandLandmarker,
+    FilesetResolver
+} from
+"https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22";
+
+
+/* =====================================================
+   ELEMENT
+===================================================== */
+
+const video =
+    document.getElementById(
+        "video"
+    );
+
+const canvas =
+    document.getElementById(
+        "canvas"
+    );
+
+const drawCanvas =
+    document.getElementById(
+        "drawCanvas"
+    );
+
+const ctx =
+    canvas.getContext("2d");
+
+const drawCtx =
+    drawCanvas.getContext("2d");
+
+const startScreen =
+    document.getElementById(
+        "start"
+    );
+
+const startButton =
+    document.getElementById(
+        "startButton"
+    );
+
+const errorBox =
+    document.getElementById(
+        "error"
+    );
+
+const modeText =
+    document.getElementById(
+        "mode"
+    );
+
+const infoText =
+    document.getElementById(
+        "info"
+    );
+
+
+/* =====================================================
+   STATE
+===================================================== */
+
+let handLandmarker = null;
+
+let running = false;
+
+let lastVideoTime = -1;
+
+
+/* =====================================================
+   MODE
+===================================================== */
+
+const DRAW_MODE = 0;
+const CAMERA_MODE = 1;
+
+let mode = DRAW_MODE;
+
+
+/* =====================================================
+   DRAWING
+===================================================== */
+
+const colors = [
+
+    "#ff0000",
+    "#00ff00",
+    "#0088ff",
+    "#ffff00",
+    "#ff00ff",
+    "#ffffff"
+
+];
+
+const colorNames = [
+
+    "RED",
+    "GREEN",
+    "BLUE",
+    "YELLOW",
+    "MAGENTA",
+    "WHITE"
+
+];
+
+let colorIndex = 0;
+
+let lastPoint = null;
+
+let lastColorChange = 0;
+
+
+/* =====================================================
+   EFFECT
+===================================================== */
+
+const effects = [
+
+    "BLUR",
+    "RGB GLITCH",
+    "NEON",
+    "INVERSE",
+    "PIXELATE",
+    "VIGNETTE",
+    "THERMAL",
+    "EDGE",
+    "MIRROR",
+    "NORMAL"
+
+];
+
+let effectIndex = 0;
+
+let lastEffectChange = 0;
+
+
+/* =====================================================
+   RESIZE
+===================================================== */
+
+function resize() {
+
+    canvas.width =
+        window.innerWidth;
+
+    canvas.height =
+        window.innerHeight;
+
+    drawCanvas.width =
+        window.innerWidth;
+
+    drawCanvas.height =
+        window.innerHeight;
+}
+
+resize();
+
+window.addEventListener(
+    "resize",
+    resize
+);
+
+
+/* =====================================================
+   ERROR
+===================================================== */
+
+function showError(
+    text
+) {
+
+    errorBox.textContent =
+        text;
+
+    console.error(text);
+}
+
+
+/* =====================================================
+   LOAD MEDIAPIPE
+===================================================== */
+
+async function loadHandTracking() {
+
+    const vision =
+        await FilesetResolver
+        .forVisionTasks(
+
+            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm"
+
+        );
+
+
+    handLandmarker =
+        await HandLandmarker
+        .createFromOptions(
+
+            vision,
+
+            {
+
+                baseOptions: {
+
+                    modelAssetPath:
+                    "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+
+                    delegate:
+                        "GPU"
+                },
+
+                runningMode:
+                    "VIDEO",
+
+                numHands:
+                    2,
+
+                minHandDetectionConfidence:
+                    .65,
+
+                minHandPresenceConfidence:
+                    .65,
+
+                minTrackingConfidence:
+                    .75
+            }
+
+        );
+}
+
+
+/* =====================================================
+   CAMERA
+===================================================== */
+
+async function startCamera() {
+
+    try {
+
+        startButton.disabled =
+            true;
+
+        startButton.textContent =
+            "LOADING...";
+
+
+        if (
+            location.protocol !==
+            "https:" &&
+            location.hostname !==
+            "localhost" &&
+            location.hostname !==
+            "127.0.0.1"
+        ) {
+
+            showError(
+                "Buka menggunakan HTTPS. " +
+                "GitHub Pages harus memakai " +
+                "alamat https://."
+            );
+
+            return;
+        }
+
+
+        /*
+           LOAD MEDIAPIPE
+        */
+
+        await loadHandTracking();
+
+
+        /*
+           CAMERA
+        */
+
+        const stream =
+            await navigator.mediaDevices
+            .getUserMedia({
+
+                video: {
+
+                    facingMode:
+                        "user",
+
+                    width: {
+                        ideal: 1280
+                    },
+
+                    height: {
+                        ideal: 720
+                    },
+
+                    frameRate: {
+                        ideal: 30,
+                        max: 30
+                    }
+                },
+
+                audio: false
+            });
+
+
+        video.srcObject =
+            stream;
+
+
+        await video.play();
+
+
+        /*
+           START
+        */
+
+        startScreen.classList
+            .add("hidden");
+
+        running = true;
+
+        requestAnimationFrame(
+            processFrame
+        );
+
+
+    } catch (error) {
+
+        console.error(
+            error
+        );
+
+        startButton.disabled =
+            false;
+
+        startButton.textContent =
+            "START CAMERA";
+
+
+        if (
+            error.name ===
+            "NotAllowedError"
+        ) {
+
+            showError(
+                "Izin kamera ditolak. " +
+                "Izinkan kamera untuk situs ini."
+            );
+
+        } else if (
+            error.name ===
+            "NotFoundError"
+        ) {
+
+            showError(
+                "Kamera tidak ditemukan."
+            );
+
+        } else {
+
+            showError(
+                "Gagal memulai: " +
+                error.message
+            );
+        }
+    }
+}
+
+
+/* =====================================================
+   PROCESS
+===================================================== */
+
+function processFrame() {
+
+    if (
+        !running ||
+        !handLandmarker
+    ) {
+
+        return;
+    }
+
+
+    if (
+        video.readyState <
+        2
+    ) {
+
+        requestAnimationFrame(
+            processFrame
+        );
+
+        return;
+    }
+
+
+    /*
+       CAMERA
+    */
+
+    ctx.save();
+
+    ctx.translate(
+        canvas.width,
+        0
+    );
+
+    ctx.scale(
+        -1,
+        1
+    );
+
+    ctx.drawImage(
+
+        video,
+
+        0,
+        0,
+
+        canvas.width,
+        canvas.height
+
+    );
+
+    ctx.restore();
+
+
+    /*
+       TRACKING
+    */
+
+    if (
+        video.currentTime !==
+        lastVideoTime
+    ) {
+
+        const result =
+            handLandmarker
+            .detectForVideo(
+
+                video,
+
+                performance.now()
+
+            );
+
+
+        lastVideoTime =
+            video.currentTime;
+
+
+        handleHands(
+            result.landmarks
+        );
+    }
+
+
+    requestAnimationFrame(
+        processFrame
+    );
+}
+
+
+/* =====================================================
+   HANDS
+===================================================== */
+
+function handleHands(
+    hands
+) {
+
+    if (
+        !hands ||
+        hands.length === 0
+    ) {
+
+        lastPoint = null;
+
+        return;
+    }
+
+
+    /*
+       DRAW
+    */
+
+    if (
+        mode === DRAW_MODE
+    ) {
+
+        drawMode(
+            hands
+        );
+
+    }
+
+    /*
+       CAMERA
+    */
+
+    else {
+
+        cameraMode(
+            hands
+        );
+    }
+
+
+    /*
+       GESTURE
+    */
+
+    if (
+        hands.length === 1
+    ) {
+
+        const hand =
+            hands[0];
+
+
+        if (
+            mode === DRAW_MODE &&
+            fiveOpen(hand)
+        ) {
+
+            mode =
+                CAMERA_MODE;
+
+            lastPoint =
+                null;
+
+        }
+
+        else if (
+            mode === CAMERA_MODE &&
+            indexOnly(hand)
+        ) {
+
+            mode =
+                DRAW_MODE;
+
+            lastPoint =
+                null;
+        }
+    }
+}
+
+
+/* =====================================================
+   FIVE OPEN
+===================================================== */
+
+function fiveOpen(
+    lm
+) {
+
+    const index =
+        lm[8].y <
+        lm[6].y;
+
+    const middle =
+        lm[12].y <
+        lm[10].y;
+
+    const ring =
+        lm[16].y <
+        lm[14].y;
+
+    const pinky =
+        lm[20].y <
+        lm[18].y;
+
+    const thumb =
+        Math.abs(
+            lm[4].x -
+            lm[2].x
+        ) > .08;
+
+
+    return (
+        index &&
+        middle &&
+        ring &&
+        pinky &&
+        thumb
+    );
+}
+
+
+/* =====================================================
+   INDEX ONLY
+===================================================== */
+
+function indexOnly(
+    lm
+) {
+
+    const index =
+        lm[8].y <
+        lm[6].y;
+
+    const middle =
+        lm[12].y >
+        lm[10].y;
+
+    const ring =
+        lm[16].y >
+        lm[14].y;
+
+    const pinky =
+        lm[20].y >
+        lm[18].y;
+
+    const thumb =
+        Math.abs(
+            lm[4].x -
+            lm[2].x
+        ) < .08;
+
+
+    return (
+        index &&
+        middle &&
+        ring &&
+        pinky &&
+        thumb
+    );
+}
+
+
+/* =====================================================
+   PINCH
+===================================================== */
+
+function pinch(
+    lm
+) {
+
+    const dx =
+        lm[4].x -
+        lm[8].x;
+
+    const dy =
+        lm[4].y -
+        lm[8].y;
+
+
+    return Math.sqrt(
+        dx * dx +
+        dy * dy
+    ) < .055;
+}
+
+
+/* =====================================================
+   DRAW MODE
+===================================================== */
+
+function drawMode(
+    hands
+) {
+
+    modeText.textContent =
+        "DRAWING MODE";
+
+
+    infoText.textContent =
+        "COLOR: " +
+        colorNames[
+            colorIndex
+        ];
+
+
+    if (
+        hands.length !== 1
+    ) {
+
+        lastPoint =
+            null;
+
+        return;
+    }
+
+
+    const lm =
+        hands[0];
+
+
+    /*
+       PINCH
+    */
+
+    if (
+        pinch(lm)
+    ) {
+
+        const now =
+            performance.now();
+
+
+        if (
+            now -
+            lastColorChange
+            > 800
+        ) {
+
+            colorIndex++;
+
+            if (
+                colorIndex >=
+                colors.length
+            ) {
+
+                colorIndex = 0;
+            }
+
+            lastColorChange =
+                now;
+
+            lastPoint =
+                null;
+        }
+
+        return;
+    }
+
+
+    /*
+       INDEX POSITION
+
+       Mirror karena kamera
+    */
+
+    const x =
+        (1 - lm[8].x)
+        * canvas.width;
+
+    const y =
+        lm[8].y
+        * canvas.height;
+
+
+    let point;
+
+
+    if (
+        lastPoint === null
+    ) {
+
+        point = {
+            x,
+            y
+        };
+
+    } else {
+
+        point = {
+
+            x:
+                lastPoint.x * .75 +
+                x * .25,
+
+            y:
+                lastPoint.y * .75 +
+                y * .25
+        };
+    }
+
+
+    /*
+       DRAW
+    */
+
+    if (
+        lastPoint
+    ) {
+
+        drawCtx.beginPath();
+
+        drawCtx.moveTo(
+            lastPoint.x,
+            lastPoint.y
+        );
+
+        drawCtx.lineTo(
+            point.x,
+            point.y
+        );
+
+        drawCtx.strokeStyle =
+            colors[
+                colorIndex
+            ];
+
+        drawCtx.lineWidth =
+            8;
+
+        drawCtx.lineCap =
+            "round";
+
+        drawCtx.stroke();
+    }
+
+
+    lastPoint =
+        point;
+
+
+    /*
+       CURSOR
+    */
+
+    drawCtx.beginPath();
+
+    drawCtx.arc(
+        point.x,
+        point.y,
+        10,
+        0,
+        Math.PI * 2
+    );
+
+    drawCtx.fillStyle =
+        colors[
+            colorIndex
+        ];
+
+    drawCtx.fill();
+
+
+    drawCtx.beginPath();
+
+    drawCtx.arc(
+        point.x,
+        point.y,
+        17,
+        0,
+        Math.PI * 2
+    );
+
+    drawCtx.strokeStyle =
+        "white";
+
+    drawCtx.lineWidth =
+        2;
+
+    drawCtx.stroke();
+}
+
+
+/* =====================================================
+   CAMERA MODE
+===================================================== */
+
+function cameraMode(
+    hands
+) {
+
+    modeText.textContent =
+        "PAPARAZZI CAMERA";
+
+
+    infoText.textContent =
+        "EFFECT: " +
+        effects[
+            effectIndex
+        ];
+
+
+    if (
+        hands.length !== 2
+    ) {
+
+        infoText.textContent =
+            "SHOW BOTH HANDS";
+
+        return;
+    }
+
+
+    const hand1 =
+        hands[0];
+
+    const hand2 =
+        hands[1];
+
+
+    /*
+       EFFECT
+    */
+
+    applyEffect();
+
+
+    /*
+       POINTS
+    */
+
+    const points = [
+
+        hand1[4],
+        hand1[8],
+
+        hand2[4],
+        hand2[8]
+
+    ].map(
+        p => ({
+
+            x:
+                (1 - p.x)
+                * canvas.width,
+
+            y:
+                p.y
+                * canvas.height
+
+        })
+    );
+
+
+    const thumb1 =
+        points[0];
+
+    const index1 =
+        points[1];
+
+    const thumb2 =
+        points[2];
+
+    const index2 =
+        points[3];
+
+
+    /*
+       FRAME
+    */
+
+    const color =
+        effectColor();
+
+
+    ctx.strokeStyle =
+        color;
+
+    ctx.lineWidth =
+        4;
+
+
+    line(
+        thumb1,
+        thumb2
+    );
+
+    line(
+        index1,
+        index2
+    );
+
+    line(
+        thumb1,
+        index1
+    );
+
+    line(
+        thumb2,
+        index2
+    );
+
+
+    /*
+       FINGERTIPS
+    */
+
+    const tips = [
+
+        hand1[4],
+        hand1[8],
+        hand1[12],
+        hand1[16],
+        hand1[20],
+
+        hand2[4],
+        hand2[8],
+        hand2[12],
+        hand2[16],
+        hand2[20]
+
+    ];
+
+
+    for (
+        const p of tips
+    ) {
+
+        const x =
+            (1 - p.x)
+            * canvas.width;
+
+        const y =
+            p.y
+            * canvas.height;
+
+
+        ctx.beginPath();
+
+        ctx.arc(
+            x,
+            y,
+            5,
+            0,
+            Math.PI * 2
+        );
+
+        ctx.fillStyle =
+            color;
+
+        ctx.fill();
+    }
+
+
+    /*
+       PINCH
+    */
+
+    if (
+        pinch(hand1) ||
+        pinch(hand2)
+    ) {
+
+        const now =
+            performance.now();
+
+
+        if (
+            now -
+            lastEffectChange
+            > 800
+        ) {
+
+            effectIndex++;
+
+            if (
+                effectIndex >=
+                effects.length
+            ) {
+
+                effectIndex = 0;
+            }
+
+            lastEffectChange =
+                now;
+        }
+    }
+}
+
+
+/* =====================================================
+   LINE
+===================================================== */
+
+function line(
+    a,
+    b
+) {
+
+    ctx.beginPath();
+
+    ctx.moveTo(
+        a.x,
+        a.y
+    );
+
+    ctx.lineTo(
+        b.x,
+        b.y
+    );
+
+    ctx.stroke();
+}
+
+
+/* =====================================================
+   EFFECT COLOR
+===================================================== */
+
+function effectColor() {
+
+    const colors = [
+
+        "#ff00ff",
+        "#00ffff",
+        "#ff0000",
+        "#ff00ff",
+        "#ffff00",
+        "#00ffff",
+        "#ff8800",
+        "#00ff00",
+        "#ff5500",
+        "#00ff00"
+
+    ];
+
+    return colors[
+        effectIndex
+    ];
+}
+
+
+/* =====================================================
+   EFFECT
+===================================================== */
+
+function applyEffect() {
+
+    /*
+       Jangan bikin effect berat
+       setiap frame di HP.
+    */
+
+    if (
+        effectIndex === 0
+    ) {
+
+        ctx.save();
+
+        ctx.globalAlpha =
+            .35;
+
+        ctx.filter =
+            "blur(6px)";
+
+        ctx.drawImage(
+            canvas,
+            0,
+            0
+        );
+
+        ctx.restore();
+    }
+
+
+    else if (
+        effectIndex === 1
+    ) {
+
+        ctx.save();
+
+        ctx.globalAlpha =
+            .3;
+
+        ctx.globalCompositeOperation =
+            "screen";
+
+        ctx.drawImage(
+            canvas,
+            10,
+            0
+        );
+
+        ctx.drawImage(
+            canvas,
+            -10,
+            0
+        );
+
+        ctx.restore();
+    }
+
+
+    else if (
+        effectIndex === 2
+    ) {
+
+        ctx.save();
+
+        ctx.globalAlpha =
+            .25;
+
+        ctx.filter =
+            "saturate(250%)";
+
+        ctx.drawImage(
+            canvas,
+            0,
+            0
+        );
+
+        ctx.restore();
+    }
+
+
+    else if (
+        effectIndex === 3
+    ) {
+
+        ctx.save();
+
+        ctx.globalCompositeOperation =
+            "difference";
+
+        ctx.fillStyle =
+            "white";
+
+        ctx.fillRect(
+            0,
+            0,
+            canvas.width,
+            canvas.height
+        );
+
+        ctx.restore();
+    }
+
+
+    else if (
+        effectIndex === 4
+    ) {
+
+        ctx.save();
+
+        ctx.imageSmoothingEnabled =
+            false;
+
+        const small =
+            document.createElement(
+                "canvas"
+            );
+
+        const scale =
+            14;
+
+
+        small.width =
+            Math.max(
+                1,
+                Math.floor(
+                    canvas.width /
+                    scale
+                )
+            );
+
+
+        small.height =
+            Math.max(
+                1,
+                Math.floor(
+                    canvas.height /
+                    scale
+                )
+            );
+
+
+        const sctx =
+            small.getContext(
+                "2d"
+            );
+
+
+        sctx.drawImage(
+
+            canvas,
+
+            0,
+            0,
+
+            small.width,
+            small.height
+
+        );
+
+
+        ctx.drawImage(
+
+            small,
+
+            0,
+            0,
+
+            canvas.width,
+            canvas.height
+
+        );
+
+
+        ctx.restore();
+    }
+
+
+    else if (
+        effectIndex === 5
+    ) {
+
+        const gradient =
+            ctx.createRadialGradient(
+
+                canvas.width / 2,
+                canvas.height / 2,
+                80,
+
+                canvas.width / 2,
+                canvas.height / 2,
+
+                Math.max(
+                    canvas.width,
+                    canvas.height
+                ) * .7
+
+            );
+
+
+        gradient.addColorStop(
+            0,
+            "rgba(0,0,0,0)"
+        );
+
+        gradient.addColorStop(
+            1,
+            "rgba(0,0,0,.75)"
+        );
+
+
+        ctx.fillStyle =
+            gradient;
+
+        ctx.fillRect(
+
+            0,
+            0,
+
+            canvas.width,
+            canvas.height
+        );
+    }
+
+
+    else if (
+        effectIndex === 6
+    ) {
+
+        ctx.save();
+
+        ctx.globalCompositeOperation =
+            "screen";
+
+        ctx.globalAlpha =
+            .2;
+
+        ctx.fillStyle =
+            "#ff5500";
+
+        ctx.fillRect(
+
+            0,
+            0,
+
+            canvas.width,
+            canvas.height
+        );
+
+        ctx.restore();
+    }
+
+
+    else if (
+        effectIndex === 7
+    ) {
+
+        ctx.save();
+
+        ctx.globalAlpha =
+            .5;
+
+        ctx.strokeStyle =
+            "#00ff00";
+
+        ctx.lineWidth =
+            2;
+
+        ctx.strokeRect(
+
+            0,
+            0,
+
+            canvas.width,
+            canvas.height
+        );
+
+        ctx.restore();
+    }
+
+
+    else if (
+        effectIndex === 8
+    ) {
+
+        ctx.save();
+
+        ctx.translate(
+            canvas.width,
+            0
+        );
+
+        ctx.scale(
+            -1,
+            1
+        );
+
+        ctx.globalAlpha =
+            .45;
+
+        ctx.drawImage(
+            canvas,
+            0,
+            0
+        );
+
+        ctx.restore();
+    }
+}
+
+
+/* =====================================================
+   START BUTTON
+===================================================== */
+
+startButton.addEventListener(
+    "click",
+    startCamera
+);
+
+</script>
+
+</body>
+</html>
+```
